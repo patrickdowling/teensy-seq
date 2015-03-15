@@ -47,7 +47,6 @@
 #define SEQ_INTERRUPT_US 20 /* 20us = 50KHz */
 #define UI_INTERRUPT_US 1000 /* 1KHz */
 
-
 #define	BLACK           0x0000
 #define	BLUE            0x001F
 #define	RED             0xF800
@@ -73,6 +72,8 @@ enum {
 #define UI_BUTTON_DEBOUNCE_TICKS 4
 #define TRIGGER_DEBOUNCE_TICKS 2
 
+#define PATTERN_LENGTH 16
+
 class seq_sequencerState {
 public:
 
@@ -81,15 +82,24 @@ public:
     pattern_.init( 6, 1, 1, 0, 0 );
     trigger_.init();
     
-    for ( int i = 0; i < 7; ++i )
-      pattern_.notes_.values_[i] = i;
+    for ( int i = 0; i < PATTERN_LENGTH; ++i ) {
+      pattern_.notes_.values_[i] = i % 12;
 
-    pattern_.accent_.values_[0] = 4;
-    pattern_.accent_.values_[4] = 3;
-    pattern_.accent_.values_[6] = 1;
+      if ( 0 == i % 4 )
+        pattern_.accent_.values_[ i ] = 1;
+      else if ( 0 == i % 7 )
+        pattern_.accent_.values_[ i ] = 4;
+    }
+
+    pattern_.octave_.start_ = 1;
+    pattern_.octave_.end_ = 6;
+
+    pattern_.gate_.end_ = 3;
 
     pattern_.slide_.values_[2] = 2;
-    pattern_.slide_.values_[7] = 4;
+    pattern_.slide_.values_[11] = 4;
+
+    reset();
   }
   
   void tick() {
@@ -104,9 +114,13 @@ public:
     pattern_.step();
   }
 
+  void reset() {
+    pattern_.reset();
+  }
+
   uint32_t current_tick_;
   uint32_t current_step_;
-  sequencer_pattern pattern_;
+  sequencer_pattern<PATTERN_LENGTH> pattern_;
 
 private:
   
@@ -157,18 +171,17 @@ const char *NOTE_NAMES[] = {
 };
 
 uint16_t PROBABILITY_COLORS[] = { BLACK, WHITE, GREEN, YELLOW, RED };
-int16_t PROBABILITY_RECT_H[] = { 0, 8, 6, 4, 2 };
+int16_t PROBABILITY_RECT_H[] = { 0, 10, 8, 4, 2 };
 
 #define COL_W (128/8)
-#define ROW_START_Y 10
+#define ROW_START_Y 0
 #define ROW_H 16
+#define DISPLAY_STEPS 8
 
 inline
 void render_event( /*const struct sequencer_pattern &_pattern,*/ int16_t _x, int16_t _y, uint16_t _bg, uint16_t _fg, int _w, int _h ) {
-  display.fillRect( _x, _y, COL_W-1, ROW_H, _bg );
-
   int16_t x = _x;
-  int16_t y = _y + ROW_H - 2;
+  int16_t y = _y + ROW_H - 4;
 
   display.drawFastHLine( x, y, 1, _fg );
   x += 1;
@@ -179,53 +192,156 @@ void render_event( /*const struct sequencer_pattern &_pattern,*/ int16_t _x, int
   x += _w;
   display.drawFastVLine( x, y, _h, _fg );
   y += _h;
-  display.drawFastHLine( x, y, COL_W - _w - 1, _fg );
+  display.drawFastHLine( x, y, COL_W - _w, _fg );
 }
 
+void render_notes( const sequencer_pattern<PATTERN_LENGTH>::note_track_t &_notes, int16_t _y, size_t _start, uint16_t _fg ) {
+  int16_t x = 0;
+  int16_t y = _y;
+
+  for ( size_t i = _start; i < _start + DISPLAY_STEPS; ++i ) {
+    display.fillRect( x, y, COL_W, ROW_H, BLACK );
+    display.setCursor( x, y + 4 );
+    display.setTextColor( WHITE );
+    display.print( NOTE_NAMES[ _notes.values_[ i ] ] );
+
+    if ( i == _notes.start_ ) {
+      display.drawFastVLine( x, y, 2, _fg );
+      display.drawFastHLine( x, y, COL_W, _fg );
+    } else if ( i == _notes.end_ ) {
+      display.drawFastHLine( x, y, COL_W-1, _fg );
+      display.drawFastVLine( x + COL_W-1, y, 2, _fg );
+    } else if ( i >= _notes.start_ && i <= _notes.end_ ) {
+      display.drawFastHLine( x, y, COL_W, _fg );
+    }
+
+    if ( i == _notes.current_step_ )
+      display.fillRect( x, y + 14, COL_W, 2, _fg );
+
+    x += COL_W;
+  }
+}
+
+void render_octave( const sequencer_pattern<PATTERN_LENGTH>::octave_track_t &_track, int16_t _y, size_t _start, uint16_t _fg ) {
+  int16_t x = 0;
+  int16_t y = _y;
+
+  for ( size_t i = _start; i < _start + DISPLAY_STEPS; ++i ) {
+    display.fillRect( x, y, COL_W, ROW_H, BLACK );
+    display.setCursor( x, y + 4 );
+    display.setTextColor( _fg );
+    display.print( _track.values_[ i ] );
+
+    if ( i == _track.start_ ) {
+      display.drawFastVLine( x, y, 2, _fg );
+      display.drawFastHLine( x, y, COL_W, _fg );
+    } else if ( i == _track.end_ ) {
+      display.drawFastHLine( x, y, COL_W-1, _fg );
+      display.drawFastVLine( x + COL_W-1, y, 2, _fg );
+    } else if ( i >= _track.start_ && i <= _track.end_ ) {
+      display.drawFastHLine( x, y, COL_W, _fg );
+    }
+
+    if ( i == _track.current_step_ )
+      display.fillRect( x, y + 14, COL_W, 2, _fg );
+
+    x += COL_W;
+  }
+}
+
+void render_triggers( const sequencer_pattern<PATTERN_LENGTH>::trigger_track_t &_track, int16_t _y, size_t _start, uint16_t _fg ) {
+  int16_t x = 0;
+  int16_t y = _y;
+
+  for ( size_t i = _start; i < _start + DISPLAY_STEPS; ++i ) {
+    display.fillRect( x, y, COL_W, ROW_H, BLACK );
+
+    render_event( x, y, BLACK, _fg, 4, PROBABILITY_RECT_H[ _track.values_[ i ] ] );
+
+    if ( i == _track.start_ ) {
+      display.drawFastVLine( x, y, 2, _fg );
+      display.drawFastHLine( x, y, COL_W, _fg );
+    } else if ( i == _track.end_ ) {
+      display.drawFastHLine( x, y, COL_W-1, _fg );
+      display.drawFastVLine( x + COL_W-1, y, 2, _fg );
+    } else if ( i >= _track.start_ && i <= _track.end_ ) {
+      display.drawFastHLine( x, y, COL_W, _fg );
+    }
+
+    if ( i == _track.current_step_ )
+      display.fillRect( x, y + 14, COL_W, 2, _fg );
+
+    x += COL_W;
+  }
+}
+
+void render_gate( const sequencer_pattern<PATTERN_LENGTH>::gate_track_t &_track, int16_t _y, size_t _start, uint16_t _fg ) {
+  int16_t x = 0;
+  int16_t y = _y;
+
+  for ( size_t i = _start; i < _start + DISPLAY_STEPS; ++i ) {
+    display.fillRect( x, y, COL_W, ROW_H, BLACK );
+
+    render_event( x, y, BLACK, _fg, COL_W-1, PROBABILITY_RECT_H[ _track.values_[ i ] ] );
+
+    if ( i == _track.start_ ) {
+      display.drawFastVLine( x, y, 2, _fg );
+      display.drawFastHLine( x, y, COL_W, _fg );
+    } else if ( i == _track.end_ ) {
+      display.drawFastHLine( x, y, COL_W-1, _fg );
+      display.drawFastVLine( x + COL_W-1, y, 2, _fg );
+    } else if ( i >= _track.start_ && i <= _track.end_ ) {
+      display.drawFastHLine( x, y, COL_W, _fg );
+    }
+
+    if ( i == _track.current_step_ )
+      display.fillRect( x, y + 14, COL_W, 2, _fg );
+
+    x += COL_W;
+  }
+}
 
 // render full display
-void redraw( const struct sequencer_pattern &_pattern, int _cursor_pos, bool _edit ) {
-
+void redraw( const struct sequencer_pattern<PATTERN_LENGTH> &_pattern, size_t _start, int _cursor_pos, bool _edit ) {
+/*
   int16_t x = COL_W-1;
   for ( int i = 0; i < 8; ++i ) {
     display.drawLine( x, 0, x, 95, LT_GREY );
     x += COL_W;
-  }  
+  }
+*/
+  int16_t y = ROW_START_Y;
+  render_notes( _pattern.notes_, y, _start, WHITE );
 
-  x = 0;
-  for ( int i = 0; i < 8; ++i ) {
+  y += ROW_H;
+  render_gate( _pattern.gate_, y, _start, GREEN );
 
-    uint16_t bg, fg;
-    fg = i == _cursor_pos ? YELLOW : WHITE;
-    int16_t y = ROW_START_Y;
+  y += ROW_H;
+  render_octave( _pattern.octave_, y, _start, GREY );
 
-    bg = _pattern.notes_.current_step_ == i ? DK_GREY : BLACK; 
-    display.fillRect( x, y, COL_W-1, ROW_H, bg );
-    display.setCursor( x, y + 2 );
-    if ( _edit && i == _cursor_pos )
-      display.setTextColor( RED );
+  y += ROW_H;
+  render_triggers( _pattern.accent_, y, _start, BLUE );
+  y += ROW_H;
+  render_triggers( _pattern.slide_, y, _start, YELLOW );
+
+  y += ROW_H;
+  display.fillRect( 0, y, 128, 16, BLACK );
+  display.setTextColor( WHITE );
+  int16_t x = 0;
+  for ( int i = 0; i < DISPLAY_STEPS; ++i ) {
+    int step = _start + i + 1;
+    if ( step < 10 )
+      display.setCursor( x + 5, y + 4 );
     else
-      display.setTextColor( fg );
-    display.print( NOTE_NAMES[ _pattern.notes_.values_[ i ] ] );
-  
-    y += ROW_H;
-    bg = _pattern.gate_.current_step_ == i ? DK_GREY : BLACK;
-    render_event( x, y, bg, i == _cursor_pos ? YELLOW : WHITE, 14, 12 );
+      display.setCursor( x + 2, y + 4 );
 
-    y += ROW_H;
-    bg = _pattern.octave_.current_step_ == i ? DK_GREY : BLACK;
-    display.setCursor( x + 4, y + 3 );
-    display.setTextColor( fg );
-    display.fillRect( x, y, COL_W-1, ROW_H, bg );
-    display.print( _pattern.octave_.values_[ i ] );
-
-    y += ROW_H;
-    bg = _pattern.accent_.current_step_ == i ? DK_GREY : BLACK;
-    render_event( x, y, bg, i == _cursor_pos ? YELLOW : BLUE, 4, _pattern.accent_.values_[ i ] * 3 );
-
-    y += ROW_H;
-    bg = _pattern.slide_.current_step_ == i ? DK_GREY : BLACK;
-    render_event( x, y, bg, i == _cursor_pos ? YELLOW : GREEN, 4, _pattern.slide_.values_[ i ] * 3 );
+    if ( _start + i == _cursor_pos ) {
+      display.fillRect( x, y, COL_W, ROW_H, WHITE );
+      display.setTextColor( LT_GREY );
+    } else {
+      display.setTextColor( WHITE );
+    }
+    display.print( _start + i + 1 );
 
     x += COL_W;
   }
@@ -253,9 +369,10 @@ void setup() {
 
   display.setTextSize(1);
   display.drawRect( 0, 96, 128, 32, RED );
-  redraw( state.pattern_, 0, false );
+  redraw( state.pattern_, 0, 0, false );
 }
 
+static size_t display_start_step = 0;
 static int cursor_pos = 0;
 static uint32_t last_step = -1;
 static bool edit_mode = false;
@@ -285,8 +402,12 @@ void loop() {
       case ID_ENCODER:
         if ( !edit_mode ) {
           cursor_pos += event.value;
-          if ( cursor_pos < 0 ) cursor_pos = 0;
-          else if ( cursor_pos > 7 ) cursor_pos = 7;
+          if ( cursor_pos < 0 )
+            cursor_pos = 0;
+          else if ( cursor_pos >= PATTERN_LENGTH )
+            cursor_pos = PATTERN_LENGTH-1;
+
+          display_start_step = ( cursor_pos / DISPLAY_STEPS ) * DISPLAY_STEPS;
         } else {
           state.pattern_.notes_.edit( cursor_pos, event.value );
         }
@@ -299,7 +420,7 @@ void loop() {
 
   uint32_t current_step = state.current_step_;
   if ( current_step != last_step || render ) {
-    redraw( state.pattern_, cursor_pos, edit_mode );
+    redraw( state.pattern_, display_start_step, cursor_pos, edit_mode );
     last_step = current_step;
   }
 }

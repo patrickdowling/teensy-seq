@@ -46,6 +46,10 @@ struct seq_track {
     current_step_ = step;
   }
 
+  void reset() {
+    current_step_ = start_;
+  }
+
   int value() const {
     return values_[ current_step_ ];
   }
@@ -59,6 +63,7 @@ struct seq_track {
   }
 };
 
+template <size_t _LENGTH>
 struct sequencer_pattern {
 
   void init( int _note, int _octave, int _gate, int _accent, int _slide ) {
@@ -72,15 +77,29 @@ struct sequencer_pattern {
   void step() {
     notes_.step();
     octave_.step();
+    gate_.step();
     accent_.step();
     slide_.step();
   }
 
-  seq_track<8,0,11> notes_;
-  seq_track<8,0,2> octave_;
-  seq_track<8,0,2> gate_;
-  seq_track<8,0,4> accent_;
-  seq_track<8,0,4> slide_;
+  void reset() {
+    notes_.reset();
+    octave_.reset();
+    gate_.reset();
+    accent_.reset();
+    slide_.reset();
+  }
+
+  typedef seq_track<_LENGTH,0,11> note_track_t;
+  typedef seq_track<_LENGTH,0,2> octave_track_t;
+  typedef seq_track<_LENGTH,0,2> gate_track_t;
+  typedef seq_track<_LENGTH,0,4> trigger_track_t;
+
+  note_track_t notes_;
+  octave_track_t octave_;
+  gate_track_t gate_;
+  trigger_track_t accent_;
+  trigger_track_t slide_;
 };
 
 #endif // SEQUENCER_H_
